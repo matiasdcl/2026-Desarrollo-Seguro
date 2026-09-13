@@ -4,7 +4,6 @@ import com.cinebuscador.model.Pelicula;
 import com.cinebuscador.repository.PeliculaRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
@@ -50,7 +49,6 @@ public class PeliculaController {
                 resultadosRaw = peliculaRepo.searchWithFunciones(buscar, ordenarPor);
             }
 
-            // Wrap Object[] in Maps for cleaner Thymeleaf access
             List<Map<String, Object>> resultados = new java.util.ArrayList<>();
             for (Object[] row : resultadosRaw) {
                 Map<String, Object> map = new HashMap<>();
@@ -85,12 +83,20 @@ public class PeliculaController {
         Pelicula pelicula = peliculaRepo.findById(id)
             .orElseThrow(() -> new EntityNotFoundException("Pelicula no encontrada"));
 
-        String filename = archivo.getOriginalFilename();
-        Path uploadPath = Paths.get(uploadDir);
+        String filename = Paths.get(archivo.getOriginalFilename()).getFileName().toString();
+
+        Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
         if (!Files.exists(uploadPath)) {
             Files.createDirectories(uploadPath);
         }
-        Files.copy(archivo.getInputStream(), uploadPath.resolve(filename));
+
+        Path destino = uploadPath.resolve(filename).normalize();
+
+        if (!destino.startsWith(uploadPath)) {
+            throw new SecurityException("Ruta de archivo invalida");
+        }
+
+        Files.copy(archivo.getInputStream(), destino);
 
         pelicula.setAfichePath(filename);
         peliculaRepo.save(pelicula);
@@ -101,10 +107,16 @@ public class PeliculaController {
     @GetMapping("/uploads/{filename:.+}")
     @ResponseBody
     public ResponseEntity<Resource> serveFile(@PathVariable String filename) throws IOException {
-        Path filePath = Paths.get(uploadDir).resolve(filename).normalize();
+        Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
+        Path filePath = uploadPath.resolve(filename).normalize();
+
+        if (!filePath.startsWith(uploadPath)) {
+            return ResponseEntity.badRequest().build();
+        }
+
         Resource resource = new UrlResource(filePath.toUri());
         MediaType mediaType = MediaTypeFactory.getMediaType(resource)
-        .orElse(MediaType.APPLICATION_OCTET_STREAM);
+            .orElse(MediaType.APPLICATION_OCTET_STREAM);
 
         if (!resource.exists()) {
             return ResponseEntity.notFound().build();
